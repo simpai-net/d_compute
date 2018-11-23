@@ -1,0 +1,410 @@
+/*
+ * @author: JiJie, simple_ai@outlook.com
+ * This file is part of d_compute.
+ * 
+ * ----- The MIT License (MIT) ----- 
+ * Copyright (c) 2009, JiJie
+ * 
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ * 
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ */
+
+#include "common.h"
+#include "hash.h"
+
+dword modulo_hash( hash_key key, dword table_size )
+{
+	bp_assert( 0 < table_size );
+
+	return key.high_part % table_size;
+}
+
+int hash_item_is_empty( hash_item *item )
+{
+	return ( 0 == item->key.high_part && 0 == item->key.low_part );
+}
+
+#define compare_key( key1, key2 ) ( key1.high_part == key2.high_part && key1.low_part == key2.low_part )
+
+int find_item_in_list( hash_item *list, hash_key key, hash_item **prev_item, hash_item **item )
+{
+	hash_item *__prev_item;
+	hash_item *locate_item;
+
+	bp_assert( NULL != item );
+
+	__prev_item = NULL;
+	locate_item = list;
+
+	for( ; ; )
+	{
+		if( NULL == locate_item )
+		{
+			break;
+		}
+		
+		if( compare_key( locate_item->key, key ) )
+		{
+			if( NULL != prev_item )
+				*prev_item = __prev_item;
+			
+			if( NULL != item )
+				*item = locate_item;
+			
+			return 0;
+		}
+
+		__prev_item = locate_item;
+		locate_item = locate_item->next_link;
+	}
+
+	if( NULL != prev_item )
+		*prev_item = NULL;
+
+	if( NULL != item )
+		*item = NULL;
+	return -1; 
+}
+
+int locate_hash_item( hash_table *table, hash_key key, hash_item **item )
+{
+	dword index;
+	hash_item *finded_item;
+
+	bp_assert( NULL != table );
+	bp_assert( NULL != item );
+
+	index = modulo_hash( key, table->size );
+
+	finded_item = &table->items[ index ];
+
+	if( FALSE == hash_item_is_empty( finded_item ) )
+	{
+		*item = NULL;
+		return -1;
+	}
+	
+	if( TRUE == compare_key( finded_item->key, key ) )
+	{
+		*item = finded_item;
+		return 0;
+	}
+
+	if( NULL == finded_item->next_link )
+	{
+		*item = NULL;
+		return -1;
+	}
+
+	return find_item_in_list( finded_item->next_link, key, NULL, item );
+}
+
+#define HASH_KEY_EXISTED -11
+int add_hash_item( hash_table *table, hash_key key, hash_value val )
+{
+	int ret;
+	dword index;
+	hash_item *item;
+	hash_item *new_item;
+	
+	bp_assert( NULL != table );
+
+	index = modulo_hash( key, table->size );
+
+	item = &table->items[ index ];
+
+	if( hash_item_is_empty( item ) )
+	{
+		item->key = key;
+		item->value = val;
+		item->next_item = table->first_hash_item;
+		item->next_link = NULL;
+		table->first_hash_item = item;
+		
+		return 0;
+	}
+	else
+	{
+		if( TRUE == compare_key( item->key, key ) )
+		{
+			return HASH_KEY_EXISTED;
+		}
+	}
+
+	if( NULL != item->next_link )
+	{
+		ret = find_item_in_list( item->next_link, key, NULL, NULL );
+		if( 0 == ret )
+		{
+			return HASH_KEY_EXISTED;
+		}
+	}
+
+	new_item = ( hash_item* )malloc( sizeof( hash_item ) );
+	if( NULL == new_item )
+	{
+		return -E_OUTOFMEMORY;
+	}
+
+	new_item->key = key;
+	new_item->value = val;
+	new_item->next_item = item->next_item;
+	new_item->next_link = item->next_link;
+	item->next_link = new_item;
+
+	return 0;
+}
+
+hash_item *find_prev_item( hash_table *table, hash_item *item )
+{
+	hash_item *finded_item;
+
+	bp_assert( NULL != table );
+	bp_assert( NULL != item );
+	bp_assert( NULL != table->header );
+
+	finded_item = table->header;
+	for( ; ; )
+	{
+		if( finded_item == NULL )
+		{
+			bp_assert( FALSE );
+			return NULL;
+		}
+
+		if( finded_item->next_item == item )
+		{
+			return finded_item;
+		}
+
+		finded_item = finded_item->next_item;
+	}
+	return NULL;
+}
+
+int del_hash_item( hash_table *table, hash_key key, hash_value *value )
+{
+	int ret;
+	dword index;
+	hash_item *item;
+	hash_item *finded_item;
+	hash_item *prev_item;
+
+	bp_assert( NULL != table );
+
+	index = modulo_hash( key, table->size );
+	
+	item = &table->items[ index ];
+
+	if( compare_key( item->key, key ) )
+	{
+		prev_item = find_prev_item( table, item );
+
+		if( NULL == prev_item )
+		{
+			bp_assert( FALSE );
+			return -1;
+		}
+		
+		prev_item->next_item = item->next_item;
+
+		item->key.high_part = 0;
+		item->key.low_part = 0;
+		item->next_item = NULL;
+		if( NULL != value )
+		{
+			*value = item->value;
+		}	
+		item->value = 0;
+		return 0;
+	}
+
+	if( NULL == item->next_link )
+	{
+		return -1;
+	}
+
+	ret = find_item_in_list( item->next_link, key, &prev_item, &finded_item );
+	if( 0 > ret )
+	{
+		if( NULL != value )
+		{
+			*value = NULL;
+		}
+		return ret;
+	}
+
+	if( NULL != prev_item )
+	{
+		prev_item->next_link = finded_item->next_link;
+	}
+
+	if( NULL != value )
+	{
+		*value = finded_item->value;
+	}
+	free( finded_item );
+	return 0;
+}
+
+int get_hash_value( hash_table *table, hash_key key, hash_value *value )
+{
+	int ret;
+	hash_item *item;
+
+	ret = locate_hash_item( table, key, &item );
+	
+	if( 0 > ret )
+	{
+		*value = NULL;
+		return ret;
+	}
+
+	*value = item->value;
+
+	return 0;
+}
+
+int init_hash_table( hash_table *table, dword size )
+{
+#define ADD_HEADER_SIZE( size ) ( size + 1 )
+	hash_item *__header;
+	bp_assert( NULL != table );
+
+	__header = ( hash_item* )malloc( sizeof( hash_item ) * ADD_HEADER_SIZE( size ) );
+
+	if( NULL == __header )
+	{
+		table->header = NULL;
+		table->items = NULL;
+		table->size = 0;
+		return -E_OUTOFMEMORY;
+	}
+
+	memset( __header, 0, sizeof( hash_item ) *  ADD_HEADER_SIZE( size ) );
+
+	table->header = __header;
+	table->items = &__header[ 1 ];
+	table->size = size;
+	return 0;
+}
+
+hash_item* get_next_hash_item( hash_item *item )
+{
+	bp_assert( NULL != item );
+	if( NULL != item->next_link )
+	{
+		return item->next_link;
+	}
+
+	return item->next_item;
+}
+
+void destroy_hash_table( hash_table *table, destroy_hash_value des_func, dword param )
+{
+	hash_item *item_list;
+	hash_item *item;
+	//hash_item *next_item;
+	hash_item *next_list;
+
+	bp_assert( NULL != table );
+
+	item = table->header->next_item;
+
+	for( ; ; )
+	{
+		if( NULL == item )
+			break;
+
+		if( FALSE == hash_item_is_empty( item ) )
+		{
+			if( NULL != des_func )
+			{
+				des_func( item->value, param );
+			}
+		}
+
+		item_list = item->next_link;
+
+		for( ; ; )
+		{
+			if( NULL == item_list )
+			{
+				break;
+			}
+
+			next_list = item_list->next_link;
+
+			if( NULL != des_func )
+			{
+				des_func( item_list->value, param );
+			}
+
+			free( item_list );
+			item_list = next_list;
+		}
+
+		item = item->next_item;
+	}
+
+	free( table->header );
+}
+
+
+hash_key make_hash_key( dword higher, dword lower )
+{
+	hash_key key;
+	key.high_part = higher;
+	key.low_part = lower;
+	return key;
+}
+
+void* get_next_item_value( void *pos_record, hash_table *table, hash_value *value )
+{
+	hash_item *item;
+
+	bp_assert( NULL != table );
+
+	if( NULL == pos_record )
+	{
+		item = table->first_hash_item;
+	}
+	else
+	{
+		item = ( hash_item* )pos_record;
+		item = get_next_hash_item( item );
+	}
+
+	if( NULL == item )
+	{
+		*value = HASH_NULL_VALUE;
+		return NULL;
+	}
+
+	*value = item->value;
+	return ( void* )item;
+}
+
+int hash_is_empty( hash_table *table )
+{
+	if( NULL == table->header->next_item )
+	{
+		return 0;
+	}
+
+	return -1;
+}
